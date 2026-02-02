@@ -99,7 +99,7 @@ OSC-Agent is an autonomous CLI tool that acts as an AI-powered open-source contr
 **Definition of Done**:
 - [ ] All directories exist with index.ts files
 - [ ] Index files export empty objects/functions (no errors)
-- [ ] Directory structure matches the architecture described in README
+- [ ] Directory structure is based on the architecture described in README and extends it with the modules defined in this plan
 - [ ] TypeScript compilation succeeds with all files
 
 ---
