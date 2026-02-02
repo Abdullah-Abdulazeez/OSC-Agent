@@ -1,6 +1,6 @@
-# OSC-Agent 🤖
+# OSC-Agent
 
-> Autonomous CLI that acts as an AI open-source contributor
+> (Open Source Contributing Agent) - Autonomous CLI that acts as an AI open-source contributor
 
 ## Overview
 
