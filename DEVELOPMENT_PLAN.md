@@ -157,9 +157,9 @@ OSC-Agent is an autonomous CLI tool that acts as an AI-powered open-source contr
 - [ ] CI workflow runs on every push and pull request
 - [ ] CI workflow includes linting, type checking, and tests
 - [ ] Build workflow verifies successful compilation
-- [ ] Publish workflow is configured but not triggered
+- [ ] Publish workflow is configured, syntactically valid, and passes when manually triggered (e.g., via `workflow_dispatch`) or on tagged releases
 - [ ] README displays build status and test coverage badges
-- [ ] All workflows pass successfully
+- [ ] All CI and build workflows pass on their configured triggers (push/PR); publish workflow passes on at least one manual or tag-based run
 
 ---
 
