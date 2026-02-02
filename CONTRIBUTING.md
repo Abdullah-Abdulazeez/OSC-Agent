@@ -60,14 +60,32 @@ Before you begin, ensure you have the following installed:
    npm install
    ```
 
-5. **Set Up Environment Variables**
+5. **Set Up Configuration**
    
-   Create a `.env` file in the root directory:
+   Create a `.env` file or `config.yaml` in the root directory:
    
+   **Option 1: Using .env file**
    ```env
    GITHUB_TOKEN=your_github_token
    GEMINI_API_KEY=your_gemini_api_key
    E2B_API_KEY=your_e2b_api_key
+   ```
+   
+   **Option 2: Using config.yaml**
+   ```yaml
+   github:
+     token: YOUR_GITHUB_TOKEN
+     
+   gemini:
+     api_key: YOUR_GEMINI_API_KEY
+     model_tier: auto  # auto, basic, advanced
+     
+   e2b:
+     api_key: YOUR_E2B_API_KEY
+     
+   testing:
+     max_iterations: 3
+     timeout: 300
    ```
 
 6. **Verify Setup**
