@@ -1,22 +1,25 @@
 import { Config } from '../config/validator';
-import { IssueAnalysis, IssueAnalysisSchema, GitHubIssue } from './types';
+import { IssueAnalysis, IssueAnalysisSchema } from './types';
 import { buildIssueAnalysisPrompt } from './prompts/issue-analysis';
+import { GeminiClient } from './gemini-client';
+import { ModelTier as GeminiModelTier } from '../types/gemini';
+import { GitHubIssue } from '../github/types';
 
 type ModelTier = 'auto' | 'basic' | 'advanced';
 
 export class IssueAnalyzer {
-  private readonly apiKey: string;
   private readonly modelTier: ModelTier;
+  private readonly gemini: GeminiClient;
 
-  constructor(config: Pick<Config, 'gemini'>) {
-    this.apiKey = config.gemini.api_key;
+  constructor(config: Pick<Config, 'gemini'>, geminiClient?: GeminiClient) {
     this.modelTier = config.gemini.model_tier;
+    this.gemini = geminiClient ?? new GeminiClient(config.gemini.api_key);
   }
 
   async analyzeIssue(issue: GitHubIssue): Promise<IssueAnalysis> {
     const title = issue.title;
     const body = issue.body ?? '';
-    const labels = (issue.labels ?? []).map((l) => l.name).filter((n): n is string => typeof n === 'string' && n.length > 0);
+    const labels = (issue.labels ?? []).map((l: { name?: string }) => l.name).filter((n: string | undefined): n is string => typeof n === 'string' && n.length > 0);
 
     const prompt = buildIssueAnalysisPrompt({ title, body, labels });
 
@@ -41,158 +44,32 @@ export class IssueAnalyzer {
   }
 
   private async generateText(prompt: string): Promise<string> {
-    const modelsToTry = selectGeminiModels(this.modelTier);
-    let lastError: Error | undefined;
+    const response = await this.gemini.generate(prompt, {
+      temperature: 0.2,
+      modelTier: mapTier(this.modelTier),
+      taskComplexity: this.modelTier === 'advanced' ? 'high' : 'medium',
+      useCache: false,
+    });
 
-    for (const model of modelsToTry) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: prompt }],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.2,
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const errBody = await safeReadBody(res);
-        const err = new Error(`IssueAnalyzer: Gemini API error ${res.status} ${res.statusText}: ${errBody}`);
-        lastError = err;
-
-        // If the model is not found / not supported, try the next model.
-        if (res.status === 404) {
-          continue;
-        }
-
-        throw err;
-      }
-
-      const json = (await res.json()) as GeminiGenerateContentResponse;
-      const text =
-        json.candidates?.[0]?.content?.parts
-          ?.map((p) => p.text)
-          .filter(Boolean)
-          .join('') ?? '';
-
-      if (!text) {
-        throw new Error('IssueAnalyzer: Gemini API returned empty text');
-      }
-
-      return text;
+    const text = typeof response.content === 'string' ? response.content : String(response.content);
+    if (!text) {
+      throw new Error('IssueAnalyzer: Gemini client returned empty text');
     }
 
-    // If all configured models failed with 404, try discovering available models.
-    const discoveredModels = await listGeminiModelsSupportingGenerateContent(this.apiKey);
-    for (const model of discoveredModels) {
-      try {
-        return await generateTextWithModel({ apiKey: this.apiKey, model, prompt });
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        continue;
-      }
-    }
-
-    throw lastError ?? new Error(`IssueAnalyzer: Gemini API error: no models succeeded. Attempted: ${modelsToTry.join(', ')}`);
+    return text;
   }
 }
 
-function selectGeminiModels(modelTier: ModelTier): string[] {
-  // v1beta model IDs can vary by account/project. We try a small ordered list.
-  // The "*-latest" aliases are commonly available.
-  switch (modelTier) {
-    case 'advanced':
-      return ['gemini-1.5-pro-latest', 'gemini-1.5-pro'];
+function mapTier(tier: ModelTier): GeminiModelTier | undefined {
+  switch (tier) {
     case 'basic':
-      return ['gemini-1.5-flash-latest', 'gemini-1.5-flash'];
+      return 'flash';
+    case 'advanced':
+      return 'pro';
     case 'auto':
     default:
-      return ['gemini-1.5-flash-latest', 'gemini-1.5-flash'];
+      return undefined;
   }
-}
-
-async function safeReadBody(res: Response): Promise<string> {
-  try {
-    return await res.text();
-  } catch {
-    return '';
-  }
-}
-
-async function generateTextWithModel(input: { apiKey: string; model: string; prompt: string }): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(input.apiKey)}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: input.prompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.2,
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    const errBody = await safeReadBody(res);
-    throw new Error(`IssueAnalyzer: Gemini API error ${res.status} ${res.statusText}: ${errBody}`);
-  }
-
-  const json = (await res.json()) as GeminiGenerateContentResponse;
-  const text =
-    json.candidates?.[0]?.content?.parts
-      ?.map((p) => p.text)
-      .filter(Boolean)
-      .join('') ?? '';
-
-  if (!text) {
-    throw new Error('IssueAnalyzer: Gemini API returned empty text');
-  }
-
-  return text;
-}
-
-async function listGeminiModelsSupportingGenerateContent(apiKey: string): Promise<string[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    return [];
-  }
-
-  const json = (await res.json()) as GeminiListModelsResponse;
-  const models = json.models ?? [];
-
-  return (
-    models
-      .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-      .map((m) => m.name)
-      .filter((n): n is string => typeof n === 'string' && n.length > 0)
-      // API returns names like "models/<id>"; our endpoint needs just the id.
-      .map((n) => n.replace(/^models\//, ''))
-      // Prefer gemini models first.
-      .sort((a, b) => {
-        const aIsGemini = a.toLowerCase().includes('gemini');
-        const bIsGemini = b.toLowerCase().includes('gemini');
-        if (aIsGemini === bIsGemini) return 0;
-        return aIsGemini ? -1 : 1;
-      })
-  );
 }
 
 function extractJsonObject(text: string): string {
@@ -212,18 +89,3 @@ function extractJsonObject(text: string): string {
 
   return unfenced.slice(start, end + 1);
 }
-
-type GeminiGenerateContentResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>;
-    };
-  }>;
-};
-
-type GeminiListModelsResponse = {
-  models?: Array<{
-    name?: string;
-    supportedGenerationMethods?: string[];
-  }>;
-};
